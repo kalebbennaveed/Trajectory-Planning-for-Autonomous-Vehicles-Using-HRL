@@ -1,4 +1,4 @@
-This file contains where to find which segment of the code
+Where to find which segment of the code:
 
 Car_EnvRL: This scripts contains following functions
   >> Details of RL environment
