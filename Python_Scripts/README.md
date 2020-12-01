@@ -7,5 +7,5 @@ Details of RL environment, observe (State vector), reward Structure, low-level p
 PID longitudinal control and lateral Control
 
 # Network_LSTM: 
-High level network (Meta Model), Low level network (Model)
+High level network (Meta Model), Low level network (Controller Model)
 
