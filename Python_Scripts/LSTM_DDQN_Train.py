@@ -80,12 +80,12 @@ from tensorflow.keras.layers import GaussianNoise
 #SHOW_PREVIEW = False
 #IM_WIDTH = 640
 #IM_HEIGHT = 480
-SECONDS_PER_EPISODE = 20
+SECONDS_PER_EPISODE = 25
 REPLAY_MEMORY_SIZE = 10_000
 MIN_REWARD = -200
 EPISODES = 100
 AGGREGATE_STATS_EVERY = 10
-FPS = 60
+FPS = 30
 name = "HDQN"
 # ========================================
 
@@ -109,15 +109,15 @@ class DQNAgent:
         self.vector_size = 15
         self.EPISODES = 9999
         self.memory = deque(maxlen=REPLAY_MEMORY_SIZE)
-
-        self.writing_bool = False
+        #self.tensorboard = ModifiedTensorBoard(name, log_dir = f"logs/{name}-{int(time.time())}")
+        #self.last_logged_episode = 0
+        self.writing_bool = True
         self.reading_bool = False
-        self.network = Network_Model()
 
         
         self.gamma = 0.8    # discount rate
         # The exploration has to be decreased after each batch of training
-        self.epsilon = 1.0 # exploration rate
+        self.epsilon = 1.0# exploration rate
         self.epsilon_min = 0.001
         self.epsilon_decay = 0.999
         self.batch_size = 64
@@ -128,10 +128,10 @@ class DQNAgent:
 
 
         # Create model for meta goals
-        self.meta_model =  self.network.meta_model(input_shape = (3, 14), goal_space = self.goal_size)
+        self.meta_model =  meta_model(input_shape = (3, 14), goal_space = self.goal_size)
 
         # create model for lower level actions
-        self.model = self.network.controller_model(goal_shape = (1,), input_shape = (3,14), action_space = self.action_size)
+        self.model = controller_model(goal_shape = (1,), input_shape = (3,14), action_space = self.action_size)
 
 
         if (self.resume_training == True):
@@ -142,6 +142,10 @@ class DQNAgent:
             print("Building replay memory from csv file...")
             print("Might take few seconds")
             self.reading_and_replay()
+
+
+    # There has to be change in the way we store state information and read it.
+    # Writing lookes fine   
 
 
     def remember(self, episode, state, history, goal, action, goal_reward, action_reward, next_state, next_history, done):
@@ -164,7 +168,11 @@ class DQNAgent:
             with open('other_files1.csv', 'a+', newline = '') as csv_other_file:
                 self.other_writer = csv.writer(csv_other_file)
                 self.other_writer.writerow([int(goal), int(action), int(goal_reward), int(action_reward), bool(done)])        
+        #if len(self.memory) > self.train_start:
+            #if self.epsilon > self.epsilon_min:
+                #self.epsilon *= self.epsilon_decay
 
+        # Save the value of the 
 
     def reading_and_replay(self):
         if self.reading_bool:
@@ -283,6 +291,7 @@ class DQNAgent:
             return
 
         minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
+        print("len of mnini:", len(minibatch))
 
         state = np.zeros((self.batch_size, self.state_size))
         history = np.zeros((self.batch_size, 3, 14))
@@ -304,7 +313,10 @@ class DQNAgent:
             goal_reward.append(minibatch[i][4])
             action_reward.append(minibatch[i][5])
             next_state[i] = minibatch[i][6]
+            #print("before i:", i)
+            #print("printing minibatch:", minibatch[i][7])            
             next_history[i] = minibatch[i][7]
+            #print("before i:", i)            
             done.append(minibatch[i][8])
 
 
@@ -341,7 +353,7 @@ class DQNAgent:
 
     def load(self):
         # Saving meta model
-        episode = 1000 # The episode number you want to load
+        episode = 250
         self.meta_model = load_model("options_model"+str(episode)+".h5")
         self.model = load_model("planner_model"+str(episode)+".h5")
 
@@ -370,16 +382,27 @@ class DQNAgent:
         pylab.plot(self.episodes_r, self.average_r, 'b')
         pylab.ylabel('Score', fontsize=18)
         pylab.xlabel('Episodes', fontsize=18)
-        dqn = 'Reward_LSTM_HDQN_Double'        
+        dqn = 'Robust_HRL_1-2000'        
 
         try:
             pylab.savefig(dqn+".png")
         except OSError:
             pass
 
-        return str(self.average_r[-1])[:5]            
-
+        return str(self.average_r[-1])[:5]
+    
 '''
+        # Vehicles classified as obstacles
+        self.obstacle = [] 
+
+        # Vehicles classified as lane-follower cars
+        self.control_cars = []
+
+        # Vehicles classified as danger cars
+        self.danger_cars = []
+
+        # Vehicles classifies as slow cars
+        self.slow_cars = []
 # Test the main
 if __name__ == '__main__':
     agent = DQNAgent()
@@ -440,6 +463,9 @@ if __name__ == '__main__':
                 for actor in env.actor_list:
                     actor.destroy()
                 break
+tm.ignore_lights_percentage(danger_car,100)
+tm.distance_to_leading_vehicle(danger_car,0)
+tm.vehicle_percentage_speed_difference(danger_car,-20)
 '''
 
 if __name__ == '__main__':
@@ -448,9 +474,11 @@ if __name__ == '__main__':
     agent = DQNAgent()
     env = CarEnv()
     episode_number = 1
+    reward_list = deque(maxlen = 2)
+    reward_explore = deque(maxlen = 20)
 
     # Iterate over episodes
-    for episode in tqdm(range(episode_number, episode_number + 1000), ascii=True, unit='episodes'):
+    for episode in tqdm(range(episode_number, episode_number + 2000), ascii=True, unit='episodes'):
         env.collision_hist = []
         env.invasion_hist = []
         episode_reward = 0
@@ -468,31 +496,40 @@ if __name__ == '__main__':
         history = np.reshape([history], (1,3,14))
 
         while True:
-            if num_rand == 0:
-                env.moving_vehicle.apply_control(carla.VehicleControl(throttle = 0.3, brake = 0.0, steer = 0.0))
-                env.moving_vehicle2.apply_control(carla.VehicleControl(throttle = 0.3, brake = 0.0, steer = 0.0))
-            elif num_rand == 1:
-                env.moving_vehicle.apply_control(carla.VehicleControl(throttle = 0.4, brake = 0.0, steer = 0.0))
-                env.moving_vehicle2.apply_control(carla.VehicleControl(throttle = 0.6, brake = 0.0, steer = 0.0))
-            elif num_rand == 2:
-                env.moving_vehicle.apply_control(carla.VehicleControl(throttle = 0.5, brake = 0.0, steer = 0.0))
-                env.moving_vehicle2.apply_control(carla.VehicleControl(throttle = 0.5, brake = 0.0, steer = 0.0))
-            elif num_rand == 3:
-                env.moving_vehicle.apply_control(carla.VehicleControl(throttle = 0.3, brake = 0.0, steer = 0.0))
-                env.moving_vehicle2.apply_control(carla.VehicleControl(throttle = 0.5, brake = 0.0, steer = 0.0)) 
+            # Rule Based Episodes
+            #                                
+            if env.obstacle != []:
+                for obs in env.obstacle:
+                    obs.apply_control(carla.VehicleControl(throttle = 0.0, brake=0.0))
 
-            # Rule Based Episodes                               
-            if episode < 100:
-                goal, action = env.rule_based()
-            else:
-                goal = agent.select_goal(history)                   
-                action = agent.act(goal, history)                  
+            if env.control_cars != []:
+                for cont in env.control_cars:
+                    #obs.apply_control(carla.VehicleControl(throttle = 0.0, brake=0.0))                    
+                    cont.set_autopilot(True)
+
+            if env.slow_cars != []:
+                for slow in env.slow_cars:
+                    #obs.apply_control(carla.VehicleControl(throttle = 0.0, brake=0.0))                    
+                    slow.set_autopilot(True)
+                    env.traffic_manager.vehicle_percentage_speed_difference(slow,20)
+
+            if env.danger_cars != []:
+                for dang in env.danger_cars:
+                    #obs.apply_control(carla.VehicleControl(throttle = 0.0, brake=0.0))                    
+                    dang.set_autopilot(True)
+                    env.traffic_manager.distance_to_leading_vehicle(dang,0)
+                    env.traffic_manager.vehicle_percentage_speed_difference(dang,-20)
+                    env.traffic_manager.distance_to_leading_vehicle(dang,0)
+
+            goal = agent.select_goal(history)                   
+            action = agent.act(goal, history)                  
 
 
             next_state, goal_reward, action_reward, done, _ = env.step(goal,action)
             egoal_reward += goal_reward
             eaction_reward += action_reward
             episode_reward += (goal_reward + action_reward)
+            reward_explore.append(episode_reward)
             next_state = np.reshape(next_state, [1, agent.state_size])
            
 
@@ -511,8 +548,14 @@ if __name__ == '__main__':
             env.epi_steps += 1
 
             if done:
+                for ves in env.vehicles:
+                    ves.set_autopilot(False)
+                    ves.apply_control(carla.VehicleControl(throttle = 0.0, brake=0.0))
+
                 for actor in env.actor_list:
+                    print("destroying the cars")
                     actor.destroy()
+                print("destroyed")
                 #average = agent.PlotModel(episode_reward, egoal_reward, eaction_reward, episode)
                 average = agent.PlotReward(episode_reward, episode)
                 #agent.tensorboard.update_stats(reward_avg=average, episode_reward=episode_reward, options_reward=egoal_reward) #Episode_Reward=episode_reward, Options_reward=egoal_reward, Planner_Reward=eaction_reward)
@@ -522,8 +565,17 @@ if __name__ == '__main__':
                     agent.save(episode)
                 #agent.remember(episode_buffer)
                 agent.replay()
-                if agent.epsilon > agent.epsilon_min:
-                    agent.epsilon *= agent.epsilon_decay
+                if (episode % 20) == 0:
+                    reward_list.append(sum(reward_explore))
+                if (episode >= 40):
+                    if (agent.epsilon > agent.epsilon_min):
+                        if (reward_list[1] > reward_list[0]):
+                            agent.epsilon *= agent.epsilon_decay
+                        else:
+                            agent.epsilon = agent.epsilon/agent.epsilon_decay
+                else:
+                    if (agent.epsilon > agent.epsilon_min):
+                        agent.epsilon *= agent.epsilon_decay
                 break
             #print("going into replay")
             # End of episode - destroy agents
